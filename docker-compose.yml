@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: riskdesk-postgres
+    environment:
+      POSTGRES_USER: riskdesk
+      POSTGRES_PASSWORD: riskdesk_dev_pw
+      POSTGRES_DB: riskdesk
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U riskdesk -d riskdesk"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: riskdesk-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6381:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
+  redisdata:
