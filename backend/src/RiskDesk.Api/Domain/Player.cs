@@ -16,6 +16,11 @@ namespace RiskDesk.Api.Domain
         public bool BonusesBlocked { get; private set; }
         public int RiskScore { get; set; }
 
+        public string? LastLoginCountry { get; set; }
+        public DateTime? LastLoginAt { get; set; }
+        public DateTime RegisteredAt { get; set; } = DateTime.UtcNow;
+        public DateTime LastSeenAt { get; set; } = DateTime.UtcNow;
+
         public bool CanWithdrawl => Status == PlayerStatus.Active && !WithdrawlsFrozen
           && KycStatus != KycStatus.Requested;
         public bool CanRecivebonus => Status == PlayerStatus.Active && !BonusesBlocked;

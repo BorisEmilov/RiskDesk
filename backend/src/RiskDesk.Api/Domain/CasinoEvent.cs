@@ -3,7 +3,7 @@ namespace RiskDesk.Api.Domain
     public class CasinoEvent
     {
         public Guid Id { get; set; } = Guid.CreateVersion7();
-        public Guid Operatorid { get; set; }
+        public Guid OperatorId { get; set; }
         public Guid PlayerId { get; set; }
         public Player Player { get; set; } = null!;
         public string ExternalEventId { get; set; } = string.Empty;
