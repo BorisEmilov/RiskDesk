@@ -1,0 +1,334 @@
+// Esquema de datos de RiskDesk (PostgreSQL).
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------- Enums
+
+enum UserRole {
+  Admin
+  Analyst
+}
+
+enum Severity {
+  Low
+  Medium
+  High
+  Critical
+}
+
+enum AlertStatus {
+  Open
+  InReview
+  Escalated
+  Closed
+}
+
+enum AlertResolution {
+  None
+  TruePositive
+  FalsePositive
+}
+
+enum AlertCategory {
+  Fraud
+  Aml
+  Compliance
+  ResponsibleGambling
+}
+
+enum PlayerStatus {
+  Active
+  Suspended
+  SelfExcluded
+  Closed
+}
+
+enum KycStatus {
+  NotStarted
+  Requested
+  Verified
+  Rejected
+}
+
+enum IdentifierType {
+  Device
+  Ip
+  PaymentMethod
+  Email
+}
+
+enum EventType {
+  Registration
+  Login
+  Deposit
+  Withdrawal
+  Bet
+  Win
+  BonusClaim
+}
+
+enum DetectorType {
+  MultiAccount
+  BonusAbuse
+  PaymentVelocity
+  AccountTakeover
+  DepositWithdrawNoPlay
+  Structuring
+  LargeTransaction
+  SanctionsScreening
+  SelfExclusionBreach
+  LossChasing
+  AiPatternAnalysis
+}
+
+enum WatchlistCategory {
+  Sanction
+  Pep
+}
+
+enum AuditKind {
+  AlertCreated
+  AlertAssigned
+  AlertStatusChanged
+  AlertCommented
+  AiAnalysisCompleted
+  PlayerActionApplied
+  DetectorUpdated
+  WatchlistChanged
+  UserChanged
+  ApiKeyRotated
+}
+
+enum AiStatus {
+  NotRequested
+  Pending
+  Completed
+  Failed
+}
+
+// ---------------------------------------------------------------- Modelos
+
+/// Casino cliente (tenant). Todo cuelga de él.
+model Operator {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  name         String   @db.VarChar(100)
+  apiKeyHash   String?  @unique @map("api_key_hash") @db.VarChar(64)
+  apiKeyPrefix String?  @map("api_key_prefix") @db.VarChar(20)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  users            User[]
+  players          Player[]
+  identifiers      PlayerIdentifier[]
+  events           CasinoEvent[]
+  alerts           Alert[]
+  detectorSettings DetectorSetting[]
+  watchlist        WatchlistEntry[]
+  auditEntries     AuditEntry[]
+
+  @@map("operators")
+}
+
+/// Miembro del equipo del operador (Admin o Analyst).
+model User {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  operatorId   String   @map("operator_id") @db.Uuid
+  email        String   @unique @db.VarChar(256)
+  name         String   @db.VarChar(100)
+  passwordHash String   @map("password_hash") @db.VarChar(100)
+  role         UserRole @default(Analyst)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  operator       Operator       @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  refreshTokens  RefreshToken[]
+  assignedAlerts Alert[]        @relation("AlertAssignee")
+
+  @@index([operatorId])
+  @@map("users")
+}
+
+model RefreshToken {
+  id                  String    @id @default(uuid(7)) @db.Uuid
+  userId              String    @map("user_id") @db.Uuid
+  tokenHash           String    @unique @map("token_hash") @db.VarChar(64)
+  expiresAt           DateTime  @map("expires_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  revokedAt           DateTime? @map("revoked_at")
+  replacedByTokenHash String?   @map("replaced_by_token_hash") @db.VarChar(64)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+/// Jugador del casino con su estado de riesgo y compliance.
+model Player {
+  id                String       @id @default(uuid(7)) @db.Uuid
+  operatorId        String       @map("operator_id") @db.Uuid
+  externalId        String       @map("external_id") @db.VarChar(100)
+  email             String?      @db.VarChar(256)
+  fullName          String?      @map("full_name") @db.VarChar(150)
+  country           String?      @db.VarChar(2)
+  dateOfBirth       DateTime?    @map("date_of_birth") @db.Date
+  status            PlayerStatus @default(Active)
+  kycStatus         KycStatus    @default(NotStarted) @map("kyc_status")
+  withdrawalsFrozen Boolean      @default(false) @map("withdrawals_frozen")
+  bonusesBlocked    Boolean      @default(false) @map("bonuses_blocked")
+  riskScore         Int          @default(0) @map("risk_score")
+  lastLoginCountry  String?      @map("last_login_country") @db.VarChar(2)
+  lastLoginAt       DateTime?    @map("last_login_at")
+  registeredAt      DateTime     @default(now()) @map("registered_at")
+  lastSeenAt        DateTime     @default(now()) @map("last_seen_at")
+
+  operator    Operator           @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  identifiers PlayerIdentifier[]
+  events      CasinoEvent[]
+  alerts      Alert[]
+
+  @@unique([operatorId, externalId])
+  @@index([operatorId, riskScore])
+  @@map("players")
+}
+
+/// Identificador visto en un jugador. Compartirlo con otro jugador los vincula.
+model PlayerIdentifier {
+  id          String         @id @default(uuid(7)) @db.Uuid
+  operatorId  String         @map("operator_id") @db.Uuid
+  playerId    String         @map("player_id") @db.Uuid
+  type        IdentifierType
+  value       String         @db.VarChar(256)
+  firstSeenAt DateTime       @map("first_seen_at")
+  lastSeenAt  DateTime       @map("last_seen_at")
+
+  operator Operator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  player   Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([playerId, type, value])
+  @@index([operatorId, value])
+  @@map("player_identifiers")
+}
+
+/// Evento enviado por el casino. externalEventId garantiza la idempotencia.
+model CasinoEvent {
+  id                 String    @id @default(uuid(7)) @db.Uuid
+  operatorId         String    @map("operator_id") @db.Uuid
+  playerId           String    @map("player_id") @db.Uuid
+  externalEventId    String    @map("external_event_id") @db.VarChar(100)
+  type               EventType
+  amount             Decimal?  @db.Decimal(18, 2)
+  currency           String?   @db.VarChar(3)
+  paymentFingerprint String?   @map("payment_fingerprint") @db.VarChar(128)
+  ip                 String?   @db.VarChar(45)
+  deviceId           String?   @map("device_id") @db.VarChar(128)
+  country            String?   @db.VarChar(2)
+  bonusCode          String?   @map("bonus_code") @db.VarChar(50)
+  occurredAt         DateTime  @map("occurred_at")
+  receivedAt         DateTime  @default(now()) @map("received_at")
+  processedAt        DateTime? @map("processed_at")
+
+  operator Operator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  player   Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([operatorId, externalEventId])
+  @@index([playerId, type, occurredAt])
+  @@index([processedAt, receivedAt])
+  @@map("events")
+}
+
+/// Alerta investigable con su máquina de estados, asignación, SLA, evidencia y análisis de IA.
+model Alert {
+  id           String          @id @default(uuid(7)) @db.Uuid
+  operatorId   String          @map("operator_id") @db.Uuid
+  playerId     String          @map("player_id") @db.Uuid
+  detector     DetectorType
+  category     AlertCategory
+  severity     Severity
+  title        String          @db.VarChar(200)
+  evidence     Json            @default("{}")
+  riskPoints   Int             @map("risk_points")
+  status       AlertStatus     @default(Open)
+  resolution   AlertResolution @default(None)
+  assignedToId String?         @map("assigned_to_id") @db.Uuid
+  dueAt        DateTime        @map("due_at")
+  createdAt    DateTime        @default(now()) @map("created_at")
+  updatedAt    DateTime        @updatedAt @map("updated_at")
+  closedAt     DateTime?       @map("closed_at")
+  /// Concurrencia optimista: cada cambio incrementa la versión
+  version      Int             @default(0)
+  aiStatus     AiStatus        @default(NotRequested) @map("ai_status")
+  aiRiskScore  Int?            @map("ai_risk_score")
+  aiAnalysis   Json?           @map("ai_analysis")
+  aiAnalyzedAt DateTime?       @map("ai_analyzed_at")
+
+  operator   Operator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  player     Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  assignedTo User?    @relation("AlertAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  @@index([operatorId, status, createdAt])
+  @@index([playerId, detector, createdAt])
+  @@map("alerts")
+}
+
+/// Configuración de cada detector por operador.
+model DetectorSetting {
+  id            String       @id @default(uuid(7)) @db.Uuid
+  operatorId    String       @map("operator_id") @db.Uuid
+  detector      DetectorType
+  isEnabled     Boolean      @default(true) @map("is_enabled")
+  severity      Severity
+  riskPoints    Int          @map("risk_points")
+  cooldownHours Int          @map("cooldown_hours")
+  /// Parámetros numéricos: {"windowDays":7,"threshold":2000}
+  parameters    Json         @default("{}")
+
+  operator Operator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+
+  @@unique([operatorId, detector])
+  @@map("detector_settings")
+}
+
+/// Persona sancionada o PEP contra la que se criban los registros.
+model WatchlistEntry {
+  id             String            @id @default(uuid(7)) @db.Uuid
+  operatorId     String            @map("operator_id") @db.Uuid
+  fullName       String            @map("full_name") @db.VarChar(200)
+  normalizedName String            @map("normalized_name") @db.VarChar(200)
+  category       WatchlistCategory
+  source         String            @db.VarChar(50)
+  country        String?           @db.VarChar(2)
+  createdAt      DateTime          @default(now()) @map("created_at")
+
+  operator Operator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+
+  @@index([operatorId])
+  @@map("watchlist")
+}
+
+/// Entrada del registro de auditoría, encadenada por hash con la anterior del mismo operador.
+model AuditEntry {
+  id           Int       @id @default(autoincrement())
+  operatorId   String    @map("operator_id") @db.Uuid
+  kind         AuditKind
+  actorUserId  String?   @map("actor_user_id") @db.Uuid
+  actorName    String    @map("actor_name") @db.VarChar(100)
+  alertId      String?   @map("alert_id") @db.Uuid
+  playerId     String?   @map("player_id") @db.Uuid
+  message      String    @db.VarChar(2000)
+  createdAt    DateTime  @map("created_at")
+  previousHash String    @map("previous_hash") @db.VarChar(64)
+  hash         String    @db.VarChar(64)
+
+  operator Operator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+
+  @@index([operatorId, id])
+  @@index([alertId])
+  @@index([playerId])
+  @@map("audit_log")
+}
